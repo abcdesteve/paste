@@ -121,7 +121,7 @@ class Tray(QSystemTrayIcon):
         QMetaObject.invokeMethod(win, "show_animation", Qt.QueuedConnection)
         # win.show_animation()
 
-        if txt == '':
+        if not txt:
             txt = pyperclip.paste()
         print('paste:', txt)
         # if self.type_mode == '连续':
