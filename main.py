@@ -1,163 +1,97 @@
-import sys
-import os
-import time
-import keyboard
-import pyperclip
-import qdarkstyle
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 from PySide6.QtWidgets import *
-from ui_gui import Ui_notice
+from qfluentwidgets import *
 
-# from pynput.keyboard import Controller
+import theme_control
+
+import sys
+import time
+import keyboard
+import threading
+
+APP_NAME = '神龙粘贴'
+APP_VERSION = '2.0'
 
 
-class Main(QMainWindow, Ui_notice):
+class SystemTray(QSystemTrayIcon):
     def __init__(self):
         super().__init__()
-        self.setupUi(self)
-        self.setWindowFlags(Qt.FramelessWindowHint |
-                            Qt.WindowStaysOnTopHint | Qt.CoverWindow)
-
-        self.stop_flag = False
-
-        self.animation = QPropertyAnimation(self, b'pos')
-        self.animation.setDuration(500)
-
-        self.btn.clicked.connect(self.stop)
-
-        QTimer.singleShot(0, self.hide_animation)
-        # QTimer.singleShot(1000, self.show)
-        # self.setWindowOpacity(0.75)
+        self.setIcon(QIcon('icon.png'))
+        self.init_actions()
+        self.setupUI()
+        self.clipboard = app.clipboard()
+        self.clipboard.dataChanged.connect(self.update)
+        self.update()
         self.show()
+        # self.timer=QTimer()
+        # self.timer.setInterval(500)
+        # self.timer.timeout.connect(self.update)
+        # self.timer.start()
 
-    def stop(self):
-        self.stop_flag = True
+    def setupUI(self):
+        self.menu = SystemTrayMenu(APP_NAME+' v'+APP_VERSION)
+        self.menu.addAction(self.ac_paste)
 
-    @Slot()
-    def show_animation(self):
-        self.animation.setEasingCurve(QEasingCurve.OutBack)
-        pos_x = QGuiApplication.primaryScreen().size().width()//2-self.width()//2
-        self.animation.setStartValue(QPoint(pos_x, -self.height()))
-        self.animation.setEndValue(QPoint(pos_x, 0))
-        self.animation.start()
+        self.menu_history = RoundMenu('历史剪贴板')
+        self.menu_history.addAction(self.ac_empty)
+        self.menu_history.setIcon(FluentIcon.icon(FluentIcon.HISTORY))
+        self.menu.addMenu(self.menu_history)
 
-    @Slot()
-    def hide_animation(self):
-        self.animation.setEasingCurve(QEasingCurve.InBack)
-        pos_x = QGuiApplication.primaryScreen().size().width()//2-self.width()//2
-        self.animation.setStartValue(QPoint(pos_x, 0))
-        self.animation.setEndValue(QPoint(pos_x, -self.height()))
-        self.animation.start()
+        self.menu_mode = CheckableMenu('粘贴模式', None, MenuIndicatorType.RADIO)
+        self.menu_mode.addActions([self.ac_mode_wbw, self.ac_mode_aao])
+        self.menu_mode.setIcon(FluentIcon.icon(FluentIcon.EDIT))
+        self.menu.addMenu(self.menu_mode)
+        # self.menu.add
 
-
-class Tray(QSystemTrayIcon):
-    def __init__(self):
-        super().__init__()
-        self.setup()
-        self.setIcon(
-            QIcon(os.path.join(os.path.dirname(__file__), 'icon.png')))
-        self.show()
-
-    def setup(self):
-        self.menu = QMenu()
-        # self.win = Main()
-        self.type_mode = '逐字'
-        self.index = 0
-
-        # self.keyboard = Controller()
-
-        keyboard.add_hotkey('ctrl+shift+alt+space',
-                            self.paste, suppress=True,timeout=3,trigger_on_release=True)
-        self.action_paste = QAction('粘贴', self, triggered=self.delay_paste)
-        self.action_mode = QAction(
-            f'切换模式:{self.type_mode}', self, triggered=self.change_mode)
-        self.action_history = QMenu('历史')
-        self.action_setting = QAction('设置')
-
-        self.menu.addActions([self.action_paste, self.action_mode])
-        self.menu.addMenu(self.action_history)
-        self.menu.addActions(
-            [self.action_setting, QAction('退出', self, triggered=sys.exit)])
+        self.menu.addAction(self.ac_exit)
         self.setContextMenu(self.menu)
 
-        self.timer = QTimer()
-        self.timer.start(250)
-        self.timer.timeout.connect(self.update_history)
+    def init_actions(self):
+        self.ac_empty = QAction('(暂无记录)')
+        self.ac_empty.setDisabled(True)
+        self.ac_paste = QAction(FluentIcon.icon(
+            FluentIcon.PASTE), '5s后粘贴', self, triggered=self.paste)
+        self.ac_mode_wbw = QAction('逐字模式', self, checkable=True, checked=True,
+                                   triggered=lambda: self.menu_mode.setActiveAction(self.menu_mode.actions()[0]))
+        self.ac_mode_aao = QAction('整段模式', self, checkable=True, triggered=lambda: self.menu_mode.setActiveAction(
+            self.menu_mode.actions()[1]))
+        self.acgp_mode = QActionGroup(self)
+        self.acgp_mode.addAction(self.ac_mode_wbw)
+        self.acgp_mode.addAction(self.ac_mode_aao)
+        self.ac_exit = QAction(FluentIcon.icon(
+            FluentIcon.CLOSE), '退出', self, triggered=app.exit)
 
-    def change_mode(self):
-        if self.type_mode == '连续':
-            self.type_mode = '逐字'
-        else:
-            self.type_mode = '连续'
-        self.action_mode.setText('切换模式:{}'.format(self.type_mode))
+    def update(self):
+        self.setToolTip(
+            f"{APP_NAME} v{APP_VERSION}\n当前模式：{'逐字模式'if self.ac_mode_wbw.isChecked() else '整段模式'}\n{self.clipboard.text().strip()}")
+        if self.clipboard.text().strip():
+            self.menu_history.removeAction(self.ac_empty)
+            self.menu_history.addAction(QAction(self.clipboard.text(
+            ), self, triggered=lambda txt=self.clipboard.text(): self.paste(txt)))
+            if len(self.menu_history.actions()) > 10:
+                self.menu_history.removeAction(self.menu_history.actions()[0])
 
-    def update_history(self):
-        txt = pyperclip.paste()
-        if txt:
-            self.setToolTip(
-                '当前模式:{}\n当前剪贴板内容:\n{}'.format(self.type_mode, txt))
-            action = QAction(
-                txt, self, triggered=lambda: self.delay_paste(txt))
-            if len(self.action_history.actions()) == 0:
-                self.action_history.addAction(action)
-            elif hash(txt) != hash(self.action_history.actions()[-1].text()):
-                self.action_history.addAction(action)
-            if len(self.action_history.actions()) == 11:
-                self.action_history.removeAction(
-                    self.action_history.actions()[0])
-
-    # def history_paste(self):
-    #     # print(self.history.activeAction().text())
-    #     print([i for i in self.history.actions() if i.isChecked()][0])
-        # temp=self.history.activeAction()
-        # time.sleep(5)
-        # self.paste()
-
-    def delay_paste(self, txt=''):
-        QTimer.singleShot(5000, lambda: self.paste(txt))
-
-    def paste(self, txt=''):
-        QMetaObject.invokeMethod(win, "show_animation", Qt.QueuedConnection)
-        # win.show_animation()
-
+    def paste(self, txt='', delay=5000):
+        def worker(txt):
+            if txt:
+                delay = 50 if self.ac_mode_wbw.isChecked() else 0
+                for i in txt:
+                    keyboard.write(i)
+                    time.sleep(delay/1000)
+                    if keyboard.is_pressed('ctrl'):
+                        break
         if not txt:
-            txt = pyperclip.paste()
-        print('paste:', txt)
-        # if self.type_mode == '连续':
-        #     # self.keyboard.type(txt)
-        #     keyboard.write(txt)
-        # else:
-        #     # for i in txt:
-        #     #     time.sleep(0.001)
-        #     # self.keyboard.type(i)
-        #     keyboard.write(txt, 0.01)
-        
-        time.sleep(0.5)
-        for char in txt:
-            if not win.stop_flag:
-                keyboard.write(char)
-                if self.type_mode == '连续':
-                    time.sleep(0.001)
-                elif self.type_mode == '逐字':
-                    time.sleep(0.01)
-            else:
-                self.stop_flag = False
-                break
-
-        keyboard.release('ctrl+alt+shift')
-
-        QMetaObject.invokeMethod(win, "hide_animation", Qt.QueuedConnection)
-        # win.hide_animation()
-
-    
+            txt = self.clipboard.text()
+        self.thread_paste = threading.Thread(target=worker, args=(txt,))
+        QTimer.singleShot(delay, self.thread_paste.start)
 
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.setStyleSheet(qdarkstyle.load_stylesheet(qt_api='pyside6'))
-    app.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), 'icon.png')))
-    win = Main()
-    tray = Tray()
-    QMessageBox.information(win, '神龙粘贴v1.2', '神龙粘贴已启动\n\n请查看系统托盘')
+    theme_control.apply_theme(app, 'auto')
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    app.setWindowIcon(QIcon('icon.png'))
+    tray = SystemTray()
     sys.exit(app.exec())
