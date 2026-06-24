@@ -4,7 +4,7 @@ __version__ = 20230528
 def apply_theme(app,theme:str):
     '''supported theme:\nauto\nlight\ndark'''
     import darkdetect
-    from qfluentwidgets.common import setTheme, Theme, setThemeColor
+    from qfluentwidgets.common import setTheme, Theme, setThemeColor, themeColor
 
     # setThemeColor("#4cc2ff")
     if theme=='auto':

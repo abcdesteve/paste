@@ -11,6 +11,8 @@ import time
 import keyboard
 import threading
 
+from ShortcutSelector import ShortcutSelector
+
 APP_NAME = '神龙粘贴'
 APP_VERSION = '2.0'
 
@@ -29,6 +31,27 @@ class SystemTray(QSystemTrayIcon):
         # self.timer.setInterval(500)
         # self.timer.timeout.connect(self.update)
         # self.timer.start()
+
+    def init_actions(self):
+        self.ac_empty = QAction('(暂无记录)', enabled=False)
+        self.ac_paste = QAction(FluentIcon.icon(FluentIcon.PASTE), '5s后粘贴', triggered=self.paste)
+        self.ac_mode_wbw = QAction('逐字', checkable=True, triggered=lambda: self.menu_mode.setActiveAction(self.menu_mode.actions()[0]))
+        self.ac_mode_aao = QAction('整段', checkable=True, checked=True, triggered=lambda: self.menu_mode.setActiveAction(self.menu_mode.actions()[1]))
+        self.acgp_mode = QActionGroup(self)
+        self.acgp_mode.addAction(self.ac_mode_wbw)
+        self.acgp_mode.addAction(self.ac_mode_aao)
+        self.ac_rm_space_c = QAction('连续空格', checkable=True, checked=True)
+        self.ac_rm_endl_c = QAction(r'连续换行 (\n\n...)', checkable=True, checked=True)
+        self.ac_rm_endl_s = QAction(r'单行换行 (\n)', checkable=True, checked=False)
+        self.ac_rm_newp = QAction(r'换页 (\f)', checkable=True, checked=True)
+        self.ac_rm_tab = QAction(r'制表/Tab (\t \v)', checkable=True, checked=True)
+        self.spin_word_delay = MenuSpin('字间延迟：', 50, (10, 1000), 100)
+        self.spin_paste_delay = MenuSpin('粘贴延迟：', 5000, (500, 10000), 500)
+        self.spin_paste_delay.spin.valueChanged.connect(lambda v: self.ac_paste.setText(f"{v//1000}{'.'+str(v%1000//100) if v%1000 else ''}s后粘贴"))
+        self.shortcut_selector = ShortcutSelector(True, QKeySequence("Ctrl+Alt+V"))
+        self.shortcut_selector.shortcutChanged.connect(self.rebind_shortcut)
+        self.rebind_shortcut(self.shortcut_selector.shortcut())
+        self.ac_exit = QAction(FluentIcon.icon(FluentIcon.CLOSE), '退出', triggered=app.exit)
 
     def setupUI(self):
         self.menu = SystemTrayMenu(APP_NAME + ' v' + APP_VERSION)
@@ -66,28 +89,23 @@ class SystemTray(QSystemTrayIcon):
         self.spin_paste_delay.setParent(self.menu_settings)
         self.spin_paste_delay.move(25, 120)
 
-        # self.spin_delay.show()
+        self.menu_settings.addSeparator()
+        self.menu_settings.addWidget(QWidget(size=QSize(250, 45), styleSheet='background-color:transparent;'), False)
+        self.shortcut_selector.setParent(self.menu_settings)
+        self.shortcut_selector.move(12, 160)
+        # self.menu_settings.addWidget(self.shortcut_selector,False)
 
         self.menu.addAction(self.ac_exit)
         self.setContextMenu(self.menu)
 
-    def init_actions(self):
-        self.ac_empty = QAction('(暂无记录)', enabled=False)
-        self.ac_paste = QAction(FluentIcon.icon(FluentIcon.PASTE), '5s后粘贴', triggered=self.paste)
-        self.ac_mode_wbw = QAction('逐字', checkable=True, checked=True, triggered=lambda: self.menu_mode.setActiveAction(self.menu_mode.actions()[0]))
-        self.ac_mode_aao = QAction('整段', checkable=True, triggered=lambda: self.menu_mode.setActiveAction(self.menu_mode.actions()[1]))
-        self.acgp_mode = QActionGroup(self)
-        self.acgp_mode.addAction(self.ac_mode_wbw)
-        self.acgp_mode.addAction(self.ac_mode_aao)
-        self.ac_rm_space_c = QAction('连续空格', checkable=True, checked=True)
-        self.ac_rm_endl_c = QAction(r'连续换行 (\n\n...)', checkable=True, checked=True)
-        self.ac_rm_endl_s = QAction(r'单行换行 (\n)', checkable=True, checked=False)
-        self.ac_rm_newp = QAction(r'换页 (\f)', checkable=True, checked=True)
-        self.ac_rm_tab = QAction(r'制表/Tab (\t \v)', checkable=True, checked=True)
-        self.spin_word_delay = MenuSpin('字间延迟：', 100, (10, 1000), 100)
-        self.spin_paste_delay = MenuSpin('粘贴延迟：', 5000, (500, 10000), 500)
-        self.spin_paste_delay.spin.valueChanged.connect(lambda v: self.ac_paste.setText(f"{v//1000}{'.'+str(v%1000//100) if v%1000 else ''}s后粘贴"))
-        self.ac_exit = QAction(FluentIcon.icon(FluentIcon.CLOSE), '退出', triggered=app.exit)
+    def rebind_shortcut(self, shortcut: QKeySequence):
+        # keyboar存在bug，无按键绑定时会报错
+        try:
+            keyboard.remove_all_hotkeys()
+        except:
+            pass
+        keyboard.add_hotkey(shortcut.toString(), self.paste, ('', False), True)
+        print('Hotkey rebinded:', shortcut.toString())
 
     def update(self):
         temp = self.clipboard.text()
@@ -99,8 +117,15 @@ class SystemTray(QSystemTrayIcon):
                 self.menu_history.removeAction(self.menu_history.actions()[0])
 
     def paste(self, txt='', paste_delayed=True):
-        # txt留空则读取实时剪切板 
+        # txt留空则读取实时剪切板
         def worker(txt):
+            # keyboard热键触发不在QThread中，QTimer不可用
+            if paste_delayed:
+                time.sleep(self.spin_paste_delay.value() / 1000)
+            # 防止快捷键中的ctrl未松开而提前中断粘贴
+            while keyboard.is_pressed('ctrl') or keyboard.is_pressed('alt') or keyboard.is_pressed('shift') or keyboard.is_pressed('win') or keyboard.is_pressed('command'):
+                time.sleep(0.01)
+            time.sleep(0.1)  # ctrl易与粘贴文本组合为快捷键
             if txt:
                 delay = self.spin_word_delay.value() if self.ac_mode_wbw.isChecked() else 0
                 for i in txt:
@@ -121,8 +146,9 @@ class SystemTray(QSystemTrayIcon):
             txt = re.sub(r'\f', '', txt)
         if self.ac_rm_tab.isChecked():
             txt = re.sub(r'\t|\v', '', txt)
+        print('Paste with' + (''if paste_delayed else 'out') + ' delay:', txt[:20])
         self.thread_paste = threading.Thread(target=worker, args=(txt,))
-        QTimer.singleShot(self.spin_paste_delay.value() if paste_delayed else 0, self.thread_paste.start)
+        self.thread_paste.start()
 
 
 class MenuSpin(QWidget):
@@ -145,7 +171,7 @@ class MenuSpin(QWidget):
         self.hbox.setContentsMargins(0, 0, 0, 0)
         self.label.setStyleSheet('QLabel{background-color:transparent;}')
         self.setLayout(self.hbox)
-        self.setMaximumSize(175, 35)
+        self.setMaximumSize(230, 35)
 
     def setValue(self, value: int):
         self.spin.setValue(value)
