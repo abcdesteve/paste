@@ -6,15 +6,27 @@ from qfluentwidgets import *
 import theme_control
 
 import re
+import platformdirs
+import os
 import sys
 import time
+import json
 import keyboard
 import threading
 
 from ShortcutSelector import ShortcutSelector
+from sl_lib import sltk
 
 APP_NAME = '神龙粘贴'
 APP_VERSION = '2.0'
+
+CONFIG_TEMPLATE = {
+    "paste_mode":"aao",
+    "block_char":["space_c","endl_c","newp","tab"],
+    "paste_delay":5000,
+    "word_delay":50,
+    "shortcut":"Ctrl+Alt+V"
+}
 
 
 class SystemTray(QSystemTrayIcon):
@@ -23,6 +35,7 @@ class SystemTray(QSystemTrayIcon):
         self.setIcon(QIcon('icon.png'))
         self.init_actions()
         self.setupUI()
+        self.read_config()
         self.clipboard = app.clipboard()
         self.clipboard.dataChanged.connect(self.update)
         self.update()
@@ -45,13 +58,14 @@ class SystemTray(QSystemTrayIcon):
         self.ac_rm_endl_s = QAction(r'单行换行 (\n)', checkable=True, checked=False)
         self.ac_rm_newp = QAction(r'换页 (\f)', checkable=True, checked=True)
         self.ac_rm_tab = QAction(r'制表/Tab (\t \v)', checkable=True, checked=True)
-        self.spin_word_delay = MenuSpin('字间延迟：', 50, (10, 1000), 100)
-        self.spin_paste_delay = MenuSpin('粘贴延迟：', 5000, (500, 10000), 500)
+        self.spin_paste_delay = MenuSpin('粘贴延迟：', 5000, (500, 10000), 0)
         self.spin_paste_delay.spin.valueChanged.connect(lambda v: self.ac_paste.setText(f"{v//1000}{'.'+str(v%1000//100) if v%1000 else ''}s后粘贴"))
+        self.spin_word_delay = MenuSpin('字间延迟：', 50, (10, 1000), 0)
         self.shortcut_selector = ShortcutSelector(True, QKeySequence("Ctrl+Alt+V"))
         self.shortcut_selector.shortcutChanged.connect(self.rebind_shortcut)
         self.rebind_shortcut(self.shortcut_selector.shortcut())
         self.ac_exit = QAction(FluentIcon.icon(FluentIcon.CLOSE), '退出', triggered=app.exit)
+
 
     def setupUI(self):
         self.menu = SystemTrayMenu(APP_NAME + ' v' + APP_VERSION)
@@ -83,11 +97,11 @@ class SystemTray(QSystemTrayIcon):
         # self.menu_settings.actions()[0].setIconText('字间延时：')
         # 邪修大法，addWidget会强制添加空icon间距，很丑
         self.menu_settings.addWidget(QWidget(size=QSize(200, 37), styleSheet='background-color:transparent;'), False)
-        self.spin_word_delay.setParent(self.menu_settings)
-        self.spin_word_delay.move(25, 80)
-        self.menu_settings.addWidget(QWidget(size=QSize(200, 37), styleSheet='background-color:transparent;'), False)
         self.spin_paste_delay.setParent(self.menu_settings)
-        self.spin_paste_delay.move(25, 120)
+        self.spin_paste_delay.move(25, 80)
+        self.menu_settings.addWidget(QWidget(size=QSize(200, 37), styleSheet='background-color:transparent;'), False)
+        self.spin_word_delay.setParent(self.menu_settings)
+        self.spin_word_delay.move(25, 120)
 
         self.menu_settings.addSeparator()
         self.menu_settings.addWidget(QWidget(size=QSize(250, 45), styleSheet='background-color:transparent;'), False)
@@ -97,6 +111,60 @@ class SystemTray(QSystemTrayIcon):
 
         self.menu.addAction(self.ac_exit)
         self.setContextMenu(self.menu)
+
+    def read_config(self,force_read=False):
+        config_path=os.path.join(PATH,'config.json')
+        if os.path.isfile(config_path):
+            with open(config_path,'r',encoding='utf-8')as file:
+                data=json.load(file)
+            data=sltk.safe_load(CONFIG_TEMPLATE,data)
+            self.ac_mode_wbw.setChecked(data['paste_mode']=='wbw')
+            self.ac_mode_aao.setChecked(data['paste_mode']=='aao')
+            self.ac_rm_space_c.setChecked('rm_space'in data['block_char'])
+            self.ac_rm_endl_c.setChecked('rm_endl_c'in data['block_char'])
+            self.ac_rm_endl_s.setChecked('rm_endl_s'in data['block_char'])
+            self.ac_rm_newp.setChecked('rm_newp'in data['block_char'])
+            self.ac_rm_tab.setChecked('rm_tab'in data['block_char'])
+            self.spin_paste_delay.setValue(data['paste_delay'])
+            self.spin_word_delay.setValue(data['word_delay'])
+            self.shortcut_selector.setShortcut(QKeySequence(data['shortcut']))
+        else:
+            with open(config_path,'w',encoding='utf-8')as file:
+                json.dump(CONFIG_TEMPLATE,file,indent=4)
+            print('初始化配置文件成功')
+            self.read_config(True)
+
+        self.ac_mode_aao.changed.connect(self.write_config)
+        self.ac_mode_wbw.changed.connect(self.write_config)
+        self.ac_rm_space_c.changed.connect(self.write_config)
+        self.ac_rm_endl_c.changed.connect(self.write_config)
+        self.ac_rm_endl_s.changed.connect(self.write_config)
+        self.ac_rm_newp.changed.connect(self.write_config)
+        self.ac_rm_tab.changed.connect(self.write_config)
+        self.spin_paste_delay.spin.valueChanged.connect(self.write_config)
+        self.spin_word_delay.spin.valueChanged.connect(self.write_config)
+        self.shortcut_selector.shortcutChanged.connect(self.write_config)
+
+    def write_config(self):
+        data={}
+        data['mode']='wbw' if self.ac_mode_wbw.isChecked() else 'aao'
+        data['block_char']=[]
+        if self.ac_rm_space_c.isChecked():
+            data['block_char'].append('rm_space')
+        if self.ac_rm_endl_c.isChecked():
+            data['block_char'].append('rm_endl_c')
+        if self.ac_rm_endl_s.isChecked():
+            data['block_char'].append('rm_endl_s')
+        if self.ac_rm_newp.isChecked():
+            data['block_char'].append('rm_newp')
+        if self.ac_rm_tab.isChecked():
+            data['block_char'].append('rm_tab')
+        data['paste_delay']=self.spin_paste_delay.value()
+        data['word_delay']=self.spin_word_delay.value()
+        data['shortcut']=self.shortcut_selector.shortcut().toString()
+        with open(os.path.join(PATH,'config.json'),'w',encoding='utf-8')as file:
+            json.dump(data,file,indent=4)
+            
 
     def rebind_shortcut(self, shortcut: QKeySequence):
         # keyboar存在bug，无按键绑定时会报错
@@ -162,7 +230,9 @@ class MenuSpin(QWidget):
         if step:
             self.spin.setSingleStep(step)
         else:
-            self.spin.setStepType(CompactSpinBox.StepType.AdaptiveDecimalStepType)
+            # self.spin.setStepType(CompactSpinBox.StepType.AdaptiveDecimalStepType)
+            self.spin.valueChanged.connect(self._update_step)
+            self._update_step()
         self.spin.setRange(*range)
         self.spin.setSuffix('ms')
         self.setValue(value)
@@ -172,6 +242,23 @@ class MenuSpin(QWidget):
         self.label.setStyleSheet('QLabel{background-color:transparent;}')
         self.setLayout(self.hbox)
         self.setMaximumSize(230, 35)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def _update_step(self):
+        # 专为延时场景设计
+        if abs(self.value())<=50:
+            self.spin.setSingleStep(10)
+        elif abs(self.value())<=100:
+            self.spin.setSingleStep(50)
+        elif abs(self.value())<=1000:
+            self.spin.setSingleStep(100)
+        else:
+            self.spin.setSingleStep(500)
+    
+    def mousePressEvent(self, event):
+        self.spin.selectAll()
+        super().mousePressEvent(event)
+        event.accept()
 
     def setValue(self, value: int):
         self.spin.setValue(value)
@@ -181,6 +268,7 @@ class MenuSpin(QWidget):
 
 
 if __name__ == '__main__':
+    PATH=platformdirs.user_config_dir(appname='神龙粘贴',appauthor='Avoconal',roaming=True,ensure_exists=True)
     app = QApplication(sys.argv)
     theme_control.apply_theme(app, 'auto')
     app.setApplicationName(APP_NAME)
